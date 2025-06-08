@@ -142,11 +142,11 @@ def create_comparison_plot(data_dict, title):
     return fig
 
 # Main app
-st.title("🌍 BGS Sensor Data Explorer")
-st.markdown("Interactive exploration of the British Geological Survey sensor network")
+# st.title("🌍 BGS Sensor Data Explorer")
+# st.markdown("Interactive exploration of the British Geological Survey sensor network")
 
 # Sidebar
-st.sidebar.header("Search BGS Sensor Data")
+st.sidebar.header("BGS Sensor Data Explorer")
 
 # Remove the sensor limit slider and use a fixed large number or None
 with st.spinner("Loading sensors..."):
@@ -188,6 +188,11 @@ if not sensor_details:
 
 # SENSOR INFORMATION SECTION (COMPACT - MOVED BACK TO TOP)
 st.header(f"{sensor_details.get('name', 'Unknown Sensor')}")
+
+# Add description directly under header
+description = sensor_details.get('description', '')
+if description:
+    st.write(description)
 
 # Compact sensor info in expandable sections
 with st.expander("ℹ️ Sensor Details", expanded=False):
