@@ -114,7 +114,11 @@ def create_comparison_plot(data_dict, title):
         vertical_spacing=0.1
     )
     
-    colors = px.colors.qualitative.Set3
+    # Change from Set3 to a more readable color palette
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']  # Default Plotly colors
+    # Alternative options:
+    # colors = px.colors.qualitative.Safe  # Safe color palette
+    # colors = px.colors.qualitative.Dark24  # Dark color palette
     
     for i, (name, data) in enumerate(data_dict.items(), 1):
         if not data['df'].empty:
