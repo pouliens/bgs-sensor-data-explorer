@@ -21,10 +21,12 @@ BASE_URL = "https://sensors.bgs.ac.uk/FROST-Server/v1.1"
 
 # Cache API calls for better performance
 @st.cache_data(ttl=300)  # 5-minute cache
-def get_sensors(limit=50, filter_text=None):
+def get_sensors(limit=1000, filter_text=None):
     """Get list of sensors"""
     url = f"{BASE_URL}/Things"
-    params = {"$top": limit}
+    params = {}
+    if limit:
+        params["$top"] = limit
     if filter_text:
         params["$filter"] = filter_text
     
@@ -144,15 +146,11 @@ st.title("🌍 BGS Sensor Data Explorer")
 st.markdown("Interactive exploration of the British Geological Survey sensor network")
 
 # Sidebar
-st.sidebar.header("🔧 Configuration")
+st.sidebar.header("Search BGS Sensor Data")
 
-# Sensor selection
-st.sidebar.subheader("📍 Sensor Selection")
-sensor_limit = st.sidebar.slider("Number of sensors to load", 10, 100, 50)
-
-# Load sensors
+# Remove the sensor limit slider and use a fixed large number or None
 with st.spinner("Loading sensors..."):
-    sensors_data = get_sensors(limit=sensor_limit)
+    sensors_data = get_sensors(limit=1000)  # Use a large number to get all sensors
 
 if not sensors_data.get("value"):
     st.error("No sensors found. Please check your connection.")
@@ -188,47 +186,48 @@ if not sensor_details:
     st.error("Could not load sensor details.")
     st.stop()
 
-# Display sensor information
-st.header(f"📡 {sensor_details.get('name', 'Unknown Sensor')}")
+# SENSOR INFORMATION SECTION (COMPACT - MOVED BACK TO TOP)
+st.header(f"{sensor_details.get('name', 'Unknown Sensor')}")
 
-col1, col2 = st.columns(2)
-
-with col1:
-    st.subheader("ℹ️ Sensor Information")
-    st.write(f"**ID:** {sensor_details.get('@iot.id')}")
-    st.write(f"**Name:** {sensor_details.get('name', 'N/A')}")
-    st.write(f"**Description:** {sensor_details.get('description', 'N/A')}")
+# Compact sensor info in expandable sections
+with st.expander("ℹ️ Sensor Details", expanded=False):
+    col1, col2 = st.columns(2)
     
-    # Properties
-    properties = sensor_details.get("properties", {})
-    if properties:
-        st.write("**Properties:**")
-        for key, value in properties.items():
-            if key not in ["access_restriction", "data_usage"]:  # Skip long text
-                st.write(f"- {key}: {value}")
+    with col1:
+        st.write(f"**ID:** {sensor_details.get('@iot.id')}")
+        st.write(f"**Name:** {sensor_details.get('name', 'N/A')}")
+        
+        # Location info
+        locations = sensor_details.get("Locations", [])
+        if locations:
+            location = locations[0]
+            coords = location.get("location", {}).get("coordinates", [])
+            if coords and len(coords) >= 2:
+                st.write(f"**Coordinates:** [{coords[0]:.6f}, {coords[1]:.6f}]")
+    
+    with col2:
+        # Key properties only
+        properties = sensor_details.get("properties", {})
+        if properties:
+            key_props = ["category", "borehole_reference", "observation_start_date"]
+            for key in key_props:
+                if key in properties:
+                    st.write(f"**{key.replace('_', ' ').title()}:** {properties[key]}")
+    
+    # Description
+    description = sensor_details.get('description', 'N/A')
+    if description != 'N/A':
+        st.write(f"**Description:** {description}")
+    
+    # Simple map
+    if locations and coords and len(coords) >= 2:
+        map_data = pd.DataFrame({
+            'lat': [coords[1]],
+            'lon': [coords[0]]
+        })
+        st.map(map_data, zoom=10)
 
-with col2:
-    st.subheader("📍 Location")
-    locations = sensor_details.get("Locations", [])
-    if locations:
-        location = locations[0]
-        coords = location.get("location", {}).get("coordinates", [])
-        if coords and len(coords) >= 2:
-            st.write(f"**Coordinates:** [{coords[0]:.6f}, {coords[1]:.6f}]")
-            
-            # Create a simple map
-            map_data = pd.DataFrame({
-                'lat': [coords[1]],
-                'lon': [coords[0]]
-            })
-            st.map(map_data, zoom=10)
-        else:
-            st.write("Location coordinates not available")
-    else:
-        st.write("Location information not available")
-
-# Datastreams
-st.subheader("📊 Available Datastreams")
+# Prepare datastreams and time settings first
 datastreams = sensor_details.get("Datastreams", [])
 
 if not datastreams:
@@ -251,10 +250,10 @@ for ds in datastreams:
     datastream_info[ds_id] = format_datastream_info(ds)
 
 # Time range selection
-st.sidebar.subheader("⏰ Time Range")
 time_range = st.sidebar.selectbox(
     "Select time range:",
-    ["Last 24 hours", "Last 7 days", "Last 30 days", "Last 90 days", "All available"]
+    ["All available", "Last 24 hours", "Last 7 days", "Last 30 days", "Last 90 days"],
+    help="Choose the time period for data retrieval"
 )
 
 # Convert time range to filter
@@ -273,70 +272,81 @@ if time_range != "All available":
 # Number of observations
 obs_limit = st.sidebar.slider("Max observations per datastream", 50, 1000, 200)
 
-# Display datastreams table
-st.write("**Available measurements:**")
-df_datastreams = pd.DataFrame([info for info in datastream_info.values()])
-st.dataframe(df_datastreams, use_container_width=True)
+# Available datastreams in expandable section
+with st.expander("📊 Available Datastreams", expanded=False):
+    df_datastreams = pd.DataFrame([info for info in datastream_info.values()])
+    st.dataframe(df_datastreams, use_container_width=True)
 
-# Datastream selection for plotting
-st.subheader("📈 Data Visualization")
+# DATA VISUALIZATION SECTION
+st.header("Data Visualisation")
 
-# Single datastream analysis
-st.write("**Single Datastream Analysis**")
-selected_datastream = st.selectbox(
-    "Select a datastream to visualize:",
-    options=list(datastream_options.keys())
-)
-
-if selected_datastream:
-    datastream_id = datastream_options[selected_datastream]
-    
-    with st.spinner("Loading observations..."):
-        obs_data = get_observations(datastream_id, limit=obs_limit, time_filter=time_filter)
-    
-    observations = obs_data.get("value", [])
-    
-    if observations:
-        # Convert to DataFrame
-        df = pd.DataFrame(observations)
-        df['time'] = pd.to_datetime(df['phenomenonTime'])
-        df = df.sort_values('time')
-        
-        # Get unit information
-        ds_info = datastream_info[datastream_id]
-        unit = ds_info.get("Unit", "")
-        property_name = ds_info.get("Property", ds_info.get("Name", ""))
-        
-        # Statistics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("📊 Total Points", len(df))
-        with col2:
-            st.metric("📈 Latest Value", f"{df['result'].iloc[0]:.2f} {unit}")
-        with col3:
-            st.metric("📉 Min Value", f"{df['result'].min():.2f} {unit}")
-        with col4:
-            st.metric("📊 Max Value", f"{df['result'].max():.2f} {unit}")
-        
-        # Time series plot
-        fig = create_time_series_plot(
-            df, 
-            f"{selected_datastream} - Time Series",
-            property_name,
-            unit
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Data table
-        if st.checkbox("Show raw data"):
-            st.dataframe(df[['time', 'result']].head(100), use_container_width=True)
-    
-    else:
-        st.warning(f"No observations found for {selected_datastream} in the selected time range.")
-
-# Multi-datastream comparison
-st.write("**Multi-Datastream Comparison**")
+# Data visualization mode selection
 if len(datastream_options) > 1:
+    viz_mode = st.radio(
+        "",  # Removed the label text
+        ["Single Datastream", "Compare Multiple Datastreams"],
+        horizontal=True
+    )
+else:
+    viz_mode = "Single Datastream"
+
+if viz_mode == "Single Datastream":
+    # Single datastream analysis
+    st.subheader("Single Datastream Analysis")
+    selected_datastream = st.selectbox(
+        "Select a datastream to visualize:",
+        options=list(datastream_options.keys())
+    )
+
+    if selected_datastream:
+        datastream_id = datastream_options[selected_datastream]
+        
+        with st.spinner("Loading observations..."):
+            obs_data = get_observations(datastream_id, limit=obs_limit, time_filter=time_filter)
+        
+        observations = obs_data.get("value", [])
+        
+        if observations:
+            # Convert to DataFrame
+            df = pd.DataFrame(observations)
+            df['time'] = pd.to_datetime(df['phenomenonTime'])
+            df = df.sort_values('time')
+            
+            # Get unit information
+            ds_info = datastream_info[datastream_id]
+            unit = ds_info.get("Unit", "")
+            property_name = ds_info.get("Property", ds_info.get("Name", ""))
+            
+            # Statistics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("📊 Total Points", len(df))
+            with col2:
+                st.metric("📈 Latest Value", f"{df['result'].iloc[0]:.2f} {unit}")
+            with col3:
+                st.metric("📉 Min Value", f"{df['result'].min():.2f} {unit}")
+            with col4:
+                st.metric("📊 Max Value", f"{df['result'].max():.2f} {unit}")
+            
+            # Time series plot
+            fig = create_time_series_plot(
+                df, 
+                f"{selected_datastream} - Time Series",
+                property_name,
+                unit
+            )
+            st.plotly_chart(fig, use_container_width=True, key=f"single_chart_{datastream_id}")
+            
+            # Data table
+            if st.checkbox("Show raw data", key=f"show_raw_data_{datastream_id}"):
+                st.dataframe(df[['time', 'result']].head(100), use_container_width=True)
+        
+        else:
+            st.warning(f"No observations found for {selected_datastream} in the selected time range.")
+
+else:  # Compare Multiple Datastreams mode
+    # Multi-datastream comparison
+    st.subheader("Multi-Datastream Comparison")
     selected_multiple = st.multiselect(
         "Select multiple datastreams to compare:",
         options=list(datastream_options.keys()),
@@ -367,9 +377,66 @@ if len(datastream_options) > 1:
         
         if comparison_data:
             fig = create_comparison_plot(comparison_data, "Multi-Datastream Comparison")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="comparison_chart")
         else:
             st.warning("No data available for the selected datastreams.")
+    
+    elif len(selected_multiple) == 1:
+        st.info("Select at least 2 datastreams to see a comparison chart.")
+    else:
+        st.info("Select 2 or more datastreams from the list above to compare them side by side.")
+
+# (This section has been moved to the top after sensor details)
+
+# (This section is now moved to after data visualization section)
+
+# if selected_datastream:
+#     datastream_id = datastream_options[selected_datastream]
+    
+#     with st.spinner("Loading observations..."):
+#         obs_data = get_observations(datastream_id, limit=obs_limit, time_filter=time_filter)
+    
+#     observations = obs_data.get("value", [])
+    
+#     if observations:
+#         # Convert to DataFrame
+#         df = pd.DataFrame(observations)
+#         df['time'] = pd.to_datetime(df['phenomenonTime'])
+#         df = df.sort_values('time')
+        
+#         # Get unit information
+#         ds_info = datastream_info[datastream_id]
+#         unit = ds_info.get("Unit", "")
+#         property_name = ds_info.get("Property", ds_info.get("Name", ""))
+        
+#         # Statistics
+#         col1, col2, col3, col4 = st.columns(4)
+#         with col1:
+#             st.metric("📊 Total Points", len(df))
+#         with col2:
+#             st.metric("📈 Latest Value", f"{df['result'].iloc[0]:.2f} {unit}")
+#         with col3:
+#             st.metric("📉 Min Value", f"{df['result'].min():.2f} {unit}")
+#         with col4:
+#             st.metric("📊 Max Value", f"{df['result'].max():.2f} {unit}")
+        
+#         # Time series plot
+#         fig = create_time_series_plot(
+#             df, 
+#             f"{selected_datastream} - Time Series",
+#             property_name,
+#             unit
+#         )
+#         st.plotly_chart(fig, use_container_width=True)
+        
+#         # Data table
+#         if st.checkbox("Show raw data"):
+#             st.dataframe(df[['time', 'result']].head(100), use_container_width=True)
+    
+#     else:
+#         st.warning(f"No observations found for {selected_datastream} in the selected time range.")
+
+# (This section is now moved to after data visualization section)
 
 # Footer
 st.markdown("---")
